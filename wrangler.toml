@@ -1,0 +1,34 @@
+name = "blackroad-mesh"
+main = "src/index.ts"
+compatibility_date = "2024-01-01"
+
+[vars]
+ENVIRONMENT = "production"
+
+# Durable Objects for real-time WebSocket connections
+[durable_objects]
+bindings = [
+  { name = "MESH", class_name = "MeshRoom" }
+]
+
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["MeshRoom"]
+
+# KV Namespaces for persistence
+[[kv_namespaces]]
+binding = "AGENTS"
+id = "0f1302ff7d4c48dbb54148b822709193"
+
+[[kv_namespaces]]
+binding = "LEDGER"
+id = "47f5329a68434bd481fa9b159bbd89fd"
+
+[[kv_namespaces]]
+binding = "EVENTS"
+id = "21cbbabc19eb443aa2bee83ce0f0e96f"
+
+# Custom domain
+routes = [
+  { pattern = "mesh.blackroad.io", custom_domain = true }
+]
