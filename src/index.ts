@@ -12,6 +12,7 @@
 
 import { Hono } from 'hono';
 import { cors } from 'hono/cors';
+import type { MiddlewareHandler } from 'hono';
 
 // Types
 interface Agent {
@@ -49,6 +50,15 @@ interface Env {
   AGENTS: KVNamespace;
   LEDGER: KVNamespace;
   EVENTS: KVNamespace;
+  // OAuth / OIDC
+  OAUTH_JWKS_URL?: string;
+  OAUTH_AUDIENCE?: string;
+  OAUTH_ISSUER?: string;
+  // Vendor API proxy (self-hosted LLM, etc.)
+  LLM_BASE_URL?: string;
+  LLM_API_KEY?: string;
+  // Tailscale network metadata
+  TAILSCALE_DOMAIN?: string;
 }
 
 // PS-SHA∞ inspired hash
@@ -67,6 +77,106 @@ function generateId(): string {
   crypto.getRandomValues(array);
   return Array.from(array).map(b => b.toString(16).padStart(2, '0')).join('');
 }
+
+// ============================================
+// OAUTH / OIDC: JWT validation
+// ============================================
+
+/** Decode a base64url-encoded string to a Uint8Array. */
+function base64urlDecode(value: string): Uint8Array {
+  const b64 = value.replace(/-/g, '+').replace(/_/g, '/');
+  const padded = b64.padEnd(b64.length + (4 - (b64.length % 4)) % 4, '=');
+  const bin = atob(padded);
+  return Uint8Array.from(bin, c => c.charCodeAt(0));
+}
+
+/** Verify a signed JWT against a JWKS endpoint.
+ *  Returns the decoded payload on success, or null on failure. */
+async function verifyJwt(
+  token: string,
+  jwksUrl: string,
+  audience?: string,
+  issuer?: string
+): Promise<Record<string, unknown> | null> {
+  try {
+    const parts = token.split('.');
+    if (parts.length !== 3) return null;
+
+    const header = JSON.parse(new TextDecoder().decode(base64urlDecode(parts[0]))) as Record<string, string>;
+    const payload = JSON.parse(new TextDecoder().decode(base64urlDecode(parts[1]))) as Record<string, unknown>;
+
+    // Check expiry
+    if (typeof payload.exp === 'number' && payload.exp < Math.floor(Date.now() / 1000)) return null;
+
+    // Check issuer
+    if (issuer && payload.iss !== issuer) return null;
+
+    // Check audience
+    if (audience) {
+      const rawAud = payload.aud;
+      if (rawAud === null || rawAud === undefined) return null;
+      const aud = Array.isArray(rawAud) ? rawAud : [rawAud];
+      if (!aud.includes(audience)) return null;
+    }
+
+    // Fetch JWKS and find the matching key
+    const jwksRes = await fetch(jwksUrl, { cf: { cacheTtl: 300 } } as RequestInit);
+    if (!jwksRes.ok) return null;
+    const jwks = await jwksRes.json() as { keys: (JsonWebKey & { kid?: string; alg?: string })[] };
+
+    const jwk = jwks.keys.find(k => !header.kid || k.kid === header.kid);
+    if (!jwk) return null;
+
+    const algorithm = header.alg === 'RS256'
+      ? { name: 'RSASSA-PKCS1-v1_5', hash: 'SHA-256' }
+      : header.alg === 'RS384'
+        ? { name: 'RSASSA-PKCS1-v1_5', hash: 'SHA-384' }
+        : header.alg === 'RS512'
+          ? { name: 'RSASSA-PKCS1-v1_5', hash: 'SHA-512' }
+          : header.alg === 'ES256'
+            ? { name: 'ECDSA', hash: 'SHA-256' }
+            : null;
+
+    // Reject unsupported or missing algorithms to prevent bypass
+    if (!algorithm) return null;
+
+    const cryptoKey = await crypto.subtle.importKey('jwk', jwk, algorithm, false, ['verify']);
+
+    const signingInput = new TextEncoder().encode(`${parts[0]}.${parts[1]}`);
+    const signature = base64urlDecode(parts[2]);
+
+    const valid = await crypto.subtle.verify(algorithm, cryptoKey, signature, signingInput);
+    return valid ? payload : null;
+  } catch {
+    return null;
+  }
+}
+
+/** Extract a Bearer token from the Authorization header or a `token` query param. */
+function extractBearerToken(req: Request): string | null {
+  const authHeader = req.headers.get('Authorization');
+  if (authHeader?.startsWith('Bearer ')) return authHeader.slice(7);
+  const url = new URL(req.url);
+  return url.searchParams.get('token');
+}
+
+/** Hono middleware that requires a valid OAuth JWT when OAUTH_JWKS_URL is configured. */
+const requireAuth: MiddlewareHandler<{ Bindings: Env }> = async (c, next) => {
+  const { OAUTH_JWKS_URL, OAUTH_AUDIENCE, OAUTH_ISSUER } = c.env;
+
+  // If OAuth is not configured, skip validation (open mesh)
+  if (!OAUTH_JWKS_URL) return next();
+
+  const token = extractBearerToken(c.req.raw);
+  if (!token) return c.json({ error: 'Unauthorized: missing token' }, 401);
+
+  const payload = await verifyJwt(token, OAUTH_JWKS_URL, OAUTH_AUDIENCE, OAUTH_ISSUER);
+  if (!payload) return c.json({ error: 'Unauthorized: invalid or expired token' }, 401);
+
+  // Stash payload for downstream handlers
+  c.set('jwtPayload' as never, payload);
+  return next();
+};
 
 // ============================================
 // DURABLE OBJECT: MeshRoom
@@ -318,14 +428,16 @@ app.get('/', (c) => {
       presence: '/presence',
       stats: '/stats',
       events: '/events',
-      broadcast: '/broadcast'
+      broadcast: '/broadcast',
+      auth_status: '/auth/status',
+      llm_proxy: '/api/proxy/llm/{path}'
     },
     timestamp: new Date().toISOString()
   });
 });
 
-// WebSocket connection endpoint
-app.get('/ws', async (c) => {
+// WebSocket connection endpoint (protected when OAuth is configured)
+app.get('/ws', requireAuth, async (c) => {
   const upgradeHeader = c.req.header('Upgrade');
   if (upgradeHeader !== 'websocket') {
     return c.json({ error: 'Expected WebSocket upgrade' }, 426);
@@ -391,7 +503,7 @@ app.get('/events', async (c) => {
 });
 
 // Broadcast message via HTTP (for non-WebSocket clients)
-app.post('/broadcast', async (c) => {
+app.post('/broadcast', requireAuth, async (c) => {
   const body = await c.req.json();
   const agentId = c.req.header('X-Agent-ID') || body.from;
 
@@ -501,6 +613,88 @@ app.get('/health', (c) => {
     service: 'blackroad-mesh',
     version: '1.0.0',
     timestamp: new Date().toISOString()
+  });
+});
+
+// OAuth discovery / status (shows whether OAuth is enabled)
+app.get('/auth/status', (c) => {
+  const { OAUTH_JWKS_URL, OAUTH_ISSUER, OAUTH_AUDIENCE } = c.env;
+  return c.json({
+    oauth_enabled: Boolean(OAUTH_JWKS_URL),
+    issuer: OAUTH_ISSUER || null,
+    audience: OAUTH_AUDIENCE || null,
+    jwks_url: OAUTH_JWKS_URL || null,
+    note: OAUTH_JWKS_URL
+      ? 'Set Authorization: Bearer <token> on protected endpoints'
+      : 'OAuth not configured — mesh is open. Set OAUTH_JWKS_URL to enable.',
+    timestamp: new Date().toISOString()
+  });
+});
+
+// ============================================
+// VENDOR API PROXY
+// Routes LLM / AI requests through self-hosted infra instead of sending
+// them directly to OpenAI, Anthropic, etc.
+//
+// Usage:
+//   POST /api/proxy/llm/v1/chat/completions   → LLM_BASE_URL/v1/chat/completions
+//   POST /api/proxy/llm/v1/completions         → LLM_BASE_URL/v1/completions
+//   GET  /api/proxy/llm/v1/models              → LLM_BASE_URL/v1/models
+//
+// Set LLM_BASE_URL to your self-hosted endpoint (e.g. Ollama, vLLM, LiteLLM).
+// Set LLM_API_KEY  to authenticate to that endpoint.
+// ============================================
+
+app.all('/api/proxy/llm/*', requireAuth, async (c) => {
+  const { LLM_BASE_URL, LLM_API_KEY } = c.env;
+
+  if (!LLM_BASE_URL) {
+    return c.json({
+      error: 'LLM proxy not configured',
+      hint: 'Set the LLM_BASE_URL environment variable to your self-hosted LLM endpoint'
+    }, 503);
+  }
+
+  // Strip the proxy prefix and forward to the target
+  const proxyPath = c.req.path.replace(/^\/api\/proxy\/llm/, '');
+
+  // Guard against path traversal: reject any path containing `..` segments
+  if (/(?:^|\/)\.\.(?:\/|$)/.test(proxyPath)) {
+    return c.json({ error: 'Invalid proxy path' }, 400);
+  }
+
+  const targetUrl = new URL(`${LLM_BASE_URL}${proxyPath}`);
+
+  // Forward query parameters
+  new URL(c.req.url).searchParams.forEach((v, k) => targetUrl.searchParams.set(k, v));
+
+  const upstream = new Headers();
+  // Forward safe request headers
+  for (const key of ['content-type', 'accept', 'x-agent-id', 'x-request-id']) {
+    const val = c.req.header(key);
+    if (val) upstream.set(key, val);
+  }
+  if (LLM_API_KEY) upstream.set('Authorization', `Bearer ${LLM_API_KEY}`);
+
+  const body = c.req.method !== 'GET' && c.req.method !== 'HEAD'
+    ? await c.req.arrayBuffer()
+    : undefined;
+
+  const response = await fetch(targetUrl.toString(), {
+    method: c.req.method,
+    headers: upstream,
+    body,
+  });
+
+  const responseHeaders = new Headers();
+  for (const key of ['content-type', 'x-request-id', 'x-ratelimit-limit-requests', 'x-ratelimit-remaining-requests']) {
+    const val = response.headers.get(key);
+    if (val) responseHeaders.set(key, val);
+  }
+
+  return new Response(response.body, {
+    status: response.status,
+    headers: responseHeaders,
   });
 });
 

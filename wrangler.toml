@@ -8,6 +8,23 @@ REPO_NAME = "blackroad-os-mesh"
 ORG_NAME = "BlackRoad-OS"
 ENVIRONMENT = "production"
 
+# OAuth / OIDC — override with Wrangler secrets in production:
+#   wrangler secret put OAUTH_JWKS_URL
+#   wrangler secret put OAUTH_AUDIENCE
+#   wrangler secret put OAUTH_ISSUER
+OAUTH_JWKS_URL = ""
+OAUTH_AUDIENCE = ""
+OAUTH_ISSUER   = ""
+
+# Self-hosted LLM proxy — override with Wrangler secrets:
+#   wrangler secret put LLM_BASE_URL
+#   wrangler secret put LLM_API_KEY
+LLM_BASE_URL = ""
+LLM_API_KEY  = ""
+
+# Tailscale domain (e.g. "tailXXXXX.ts.net")
+TAILSCALE_DOMAIN = ""
+
 # Add KV, D1, R2 bindings as needed
 # [[kv_namespaces]]
 # binding = "CACHE"
