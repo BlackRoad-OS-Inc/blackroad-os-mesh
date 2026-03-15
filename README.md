@@ -1,34 +1,41 @@
+<div align="center">
+
+<img src="https://images.blackroad.io/pixel-art/road-logo.png" alt="BlackRoad OS" width="80" />
+
 # blackroad-os-mesh
 
-Live Mesh WebSocket server for real-time agent communication
+**Live Mesh WebSocket server for real-time agent communication**
 
-## 🚀 Part of BlackRoad OS
+[![BlackRoad OS](https://img.shields.io/badge/BlackRoad_OS-Pave_Tomorrow-FF2255?style=for-the-badge&labelColor=000000)](https://blackroad.io)
+[![License](https://img.shields.io/badge/License-Proprietary-FF6B2B?style=for-the-badge&labelColor=000000)](./LICENSE)
+[![Edge AI](https://img.shields.io/badge/Edge_AI-52_TOPS-00D4FF?style=for-the-badge&labelColor=000000)](https://github.com/BlackRoad-OS-Inc)
 
-This repository is part of the **BlackRoad OS** ecosystem - a ranked quantum AI operating system with multi-cloud deployment.
+</div>
 
-**Brand Colors**: #FF9D00 • #FF6B00 • #FF0066 • #D600AA • #7700FF • #0066FF
-
-## 📦 Repository Type
-
-**Type**: `typescript-app`
-
-## 🔗 Related Projects
-
-- [blackroad-os-core](https://github.com/BlackRoad-OS/blackroad-os-core) - Core OS application
-- [blackroad-os-operator](https://github.com/BlackRoad-OS/blackroad-os-operator) - Operator engine
-- [blackroad-agents](https://github.com/BlackRoad-OS/blackroad-agents) - Agent ecosystem
-
-## 📧 Contact
-
-- **Email**: blackroad.systems@gmail.com
-- **GitHub**: [@BlackRoad-OS](https://github.com/BlackRoad-OS)
-
-## 📄 License
-
-MIT License - see [LICENSE](LICENSE) for details
-
-Copyright © 2025 BlackRoad OS, Inc. / Alexa Louise Amundson
+<div align="center">
+<sub>Part of the <a href="https://blackroad.io">BlackRoad OS</a> ecosystem — sovereign edge AI infrastructure</sub>
+</div>
 
 ---
 
-**🔮 Built with quantum consciousness by Lucidia**
+## Overview
+
+Live Mesh WebSocket server for real-time agent communication
+
+## License
+
+**Proprietary** — Copyright © 2024–2026 [BlackRoad OS, Inc.](https://blackroad.io) All rights reserved.
+
+Founder & CEO: **Alexa Louise Amundson** · Delaware C-Corp
+
+See [LICENSE](./LICENSE) for full terms.
+
+---
+
+<div align="center">
+
+**BlackRoad OS — Pave Tomorrow.**
+
+[blackroad.io](https://blackroad.io) · [GitHub](https://github.com/BlackRoad-OS-Inc) · [Brand](https://brand.blackroad.io)
+
+</div>
